@@ -1,0 +1,480 @@
+---
+title: "Final Paper: Explaining Life Expectancy Across the Globe"
+author: "STOR 320.01 Group 7"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(dplyr)
+library(randomForest)
+library(purrr)
+library(broom)
+library(ggplot2)
+library(caret)
+library(tidyr)
+library(glmnet)
+library(gridExtra)
+library(knitr)
+data = read_csv("Life-Expectancy-Data-Updated.csv")
+life = read_csv("Life-Expectancy-Data-Updated.csv")
+life_expectancy = read.csv("Life-Expectancy-Data-Updated.csv")
+```
+
+# INTRODUCTION
+
+  Why do life expectancy rates differ drastically across countries, with some countries such as Nigeria having a life expectancy of 54 years while others such as Japan have a life expectancy of 85 years? Our group was intrigued by this phenomenon and explored a data set from the World Health Organization that contained information on life expectancy, health, economic and demographic information. When looking at this data set, our group was focused on exploring which variables could lead to such drastic differences for life expectancy. One common conception people may have is that schooling is an important variable in raising one’s life expectancy. However, when taking a look at our data we found outliers that create a more complex picture than we initially presumed. It was from this notion that our group decided to focus on answering questions surrounding improving life expectancy to help public policymakers create a better life for everyone. 
+
+  The first question that we explored from the dataset was “In each region, which variable out of **HIV**, **GDP**, **Population**, and **Schooling** best explain differences in countries’ life expectancy?” The most impacting variable in life expectancy could be different in each region. For example, in one region, schooling might be the most impacting variable, but incidents of HIV might be more dominant in another region. By identifying the variables, we can better understand the key drivers of health outcomes and create more targeted and effective policy prioritization based on individual regions' needs. A region where education is the primary factor impacting life expectancy may prioritize its policy on educational reforms, whereas a region where HIV has the most significant impact on life expectancy would likely focus its policy initiatives on improving healthcare and addressing the epidemic.
+
+
+  The second question we explored was “What confounding variables could be making it appear so that countries that have above average schooling rates to also have above average adult mortalities?” **Schooling** and **Adult Mortality** had a negative relationship, but there were some countries with high schooling and high adult mortality. We found a total of 9 countries that go against our preconceptions of the relationship between education and life expectancy. This was our motivation in exploring if there were other variables causing this discrepancy. Discovering if there are confounding variables impacting life expectancy in these countries could help in mitigating the high adult mortality rates.
+
+
+  Numerous organizations can utilize the findings of these questions when it comes to public policy production and improving public health. The World Health Organization (WHO), which compiled this dataset, and partners such as UNICEF, can translate evidence on HIV prevalence, economic conditions, population density, and schooling into region-specific investments that yield the greatest health gains. Together, our questions allow us to provide practical insight that can allow policy makers and roles alike to enhance life expectancy throughout the world by producing more efficient health policies that tackle major health crises. 
+
+
+
+# DATA
+
+  Our group chose to analyze Life Expectancy data from the World Health Organization. This dataset consists of life expectancy, health, immunization, economic, and demographic information from 179 countries from 2000-2015. Schooling information was collected from a project called Our World in Data from University of Oxford. Population, GDP, and Life Expectancy were collected from World Bank Data. Many other variables such as BMI, HIV incidents, and Mortality were collected from World Health Organization datasets. 
+
+  For the first question, we used the variables **Life Expectancy**, **Incidents of HIV**, **GDP**, **Population**, and **Schooling**. We decided to use these variables because they appeared to have the largest effect on life expectancy in our preliminary data analysis. Life Expectancy is measured as the average life expectancy of both genders in years from 2000 to 2015. HIV data observations are measured as incidents of HIV per 1000 population aged 15-49. GDP is measured as GDP per capita in current USD. Population is measured in population in millions. Schooling is measured as the average years of schooling people aged 25+ spent in formal education. Given that there are 179 countries and each observation is for each year from 2000-2015, we have over 2500 observations for each of the variables mentioned above. 
+
+
+```{r Descriptive Table, echo = FALSE, fig.cap = "Figure 1"}
+life_expectancy %>% 
+  select("Life_expectancy", "Incidents_HIV", "GDP_per_capita", "Population_mln", "Schooling") %>%
+  head(5) %>%
+  kable(caption = "Figure 1") 
+  
+```
+
+  The descriptive table above (Figure 1) previews the data that was used for the modeling of our first question. Each row represents an entry of one country’s schooling, life expectancy, incidents of HIV, GDP per Capita, and Population which are all the predictive variables that we are examining in our first question.
+
+
+  For the second question, we used the variables **Schooling**, **Adult Mortality**, **Life Expectancy**, **Incidents of HIV**, **Immunization Rates**, and **Thinness**. These variables originate from the Life Expectancy data set. Adult mortality is measured as the number of deaths per 1000 in the population of that country in that year. Immunization rates represent coverage in % of 1 year olds of various diseases such as Hepatitis, Measles, Polio, Diphtheria. Thinness represents two columns in the dataset where one is percentage amongst 10-19 year olds that are 2 standard deviations below the median, and the other is percentage amongst 5-9 year olds that are two standard deviations below the median. These variables appeared to have the most positive relationship with both variables when we were conducting our exploratory data analysis, leading us to believe that they could be confounding when determining the relationship between above average adult mortality and above average schooling.
+
+
+```{r World Map, echo = FALSE, message = FALSE, fig.cap = "Figure 2"}
+data1 = data %>%
+  mutate(Groups = ifelse(Schooling >= quantile(data$Schooling, 0.75) & Adult_mortality >= mean(data$Adult_mortality), 1, 0)) %>%
+  mutate(Country = ifelse(Country=="Russian Federation", "Russia", Country)) %>%
+  mutate(Country = ifelse(Country=="Kyrgyz Republic", "Kyrgyzstan", Country)) %>%
+  select(Country, Year, Groups, Schooling, Adult_mortality, Life_expectancy)
+  
+data2 = data1 %>%
+  group_by(Country) %>%
+  summarize(
+    mean_schooling = mean(Schooling),
+    mean_adult_mortality = mean(Adult_mortality),
+    mean_life_expectancy = mean(Life_expectancy),
+    Groups = sum(Groups)
+  )
+
+world = map_data("world") %>%
+  rename(Country = region)
+
+worldSubset <- left_join(world, data2, by = "Country") %>%
+  mutate(Groups2 = ifelse(Groups > 0, 1, 0)) %>%
+  mutate(Groups2 = ifelse(is.na(Groups2), 0, Groups2)) %>%
+  mutate(Groups = ifelse(is.na(Groups), 0, Groups)) %>%
+  mutate(Groups3 = ifelse(Groups2 == 1, "High schooling &\nHigh adult mortality", "Other"))
+
+
+ggplot(data = worldSubset, mapping = aes(x = long, y = lat, group = group)) + 
+  coord_fixed(1.3) +
+  geom_polygon(aes(fill = as.factor(Groups3))) +
+  guides(fill = guide_legend(title = "")) +
+  scale_fill_manual(values=c("skyblue", "black")) +
+  theme_minimal()
+```
+
+  The figure above (Figure 2) shows the overlap of countries in the world where above average adult mortality and above average schooling are present in light blue. Above average is defined as equal to or above the 75th percentile for schooling. The light blue region (Russia, Moldova, Ukraine, Estonia, Kazakhstan, Lithuania, Latvia, Kyrgyzstan, Belarus) is used in our modeling of question 2 to identify the confounding variables between above average adult mortality and schooling.
+
+# RESULTS
+
+   To evaluate which variables best explain regional variance in life expectancy, we utilized both an Ordinary Least Squares (OLS) and Random Forest models on country level data grouped by region. Both models utilized the same four predictors from our original dataset: **Incidents of HIV**, **GDP per Capita**, **Population (Millions)**, and **Average Schooling**. Our OLS model estimates the linear relationship between life expectancy and each predictor variable by minimizing the squared difference between observed values and the model's predictions. Variable importance is determined by the magnitude and direction of the standardized Z-Score for each predictor. Complementary to this model, we utilized a Random Forest model which uses a non-parametric method by building “decision trees” based on bootstrap samples and averaging these predictions. However, because of the non-parametric nature of the model, variable importance is determined by percentage increase in Mean Squared Error for each predictor. After receiving the results of each model, we used cross-validation to compare out of sample performance with the metrics: Mean Absolute Error, R-Squared, and Root Mean Squared Error (Figure 3). This comparison shows that the Random Forest model performed quite well relative to the OLS model. With MAE and RMSE being significantly lower, along with the R-Squared indicating that 99% of the variation in Life Expectancy is explained by the model's predictors.
+
+```{r Cross Validated Model Performance by Metric, echo=FALSE, message=FALSE, fig.cap = "Figure 3"}
+life_model = data %>%
+  select(Country, Region, Year, Population_mln, Schooling, GDP_per_capita, Incidents_HIV, Life_expectancy)
+
+life_clean <- life_model %>%
+  select(Life_expectancy, Population_mln, Schooling, GDP_per_capita, Incidents_HIV) %>%
+  na.omit()
+
+# Set seed for reproducibility
+set.seed(123)
+
+# Define 10-fold cross-validation
+train_control <- trainControl(method = "cv", number = 10)
+
+# 1. OLS model
+ols_model <- train(
+  Life_expectancy ~ ., 
+  data = life_clean,
+  method = "lm",
+  trControl = train_control
+)
+
+# 2. Random Forest model
+rf_model <- train(
+  Life_expectancy ~ ., 
+  data = life_clean,
+  method = "rf",
+  trControl = train_control,
+  tuneLength = 3
+)
+model_results <- resamples(list(OLS = ols_model, RandomForest = rf_model))
+model_vals <- summary(model_results)$statistics
+
+# Reshape for plotting
+metric_df <- data.frame(
+  Model = rep(rownames(model_vals$RMSE), 3),
+  Metric = rep(c("RMSE", "MAE", "R²"), each = length(rownames(model_vals$RMSE))),
+  Value = c(
+    model_vals$RMSE[, "Mean"],
+    model_vals$MAE[, "Mean"],
+    model_vals$Rsquared[, "Mean"]
+  )
+)
+
+# Faceted bar plot
+ggplot(metric_df, aes(x = Model, y = Value, fill = Model)) +
+  geom_col(width = 0.6, show.legend = FALSE) +
+  geom_text(aes(label = round(Value, 2)), 
+            vjust = -0.5, size = 3.5) +
+  facet_wrap(~ Metric, scales = "free_y") +
+  labs(
+    title = "Cross-Validated Model Performance by Metric",
+    subtitle = "Faceted by RMSE, MAE, and R² for OLS vs Random Forest",
+    x = NULL, y = "Metric Value"
+  ) +
+  scale_fill_manual(values = c("OLS" = "steelblue", "RandomForest" = "darkorange")) +
+  theme_minimal()
+
+```
+
+
+  As expected, we found that the results are highly region specific. For example, in Africa, HIV Incidence is overwhelmingly the most important variable in the region in both models, both strongly and negatively related to life expectancy. The OLS model indicates that GDP per Capita has the strongest positive effect on life expectancy in nearly every region. Schooling has a strong positive relationship in most regions, while Incidents of HIV have a strong negative effect in less developed regions such as Africa, Central America, and South America. Population has a minimal impact across most regions, but a somewhat negative relation in more developed areas such as North America, Europe and Oceania. The Random Forest model mostly reinforces the OLS results. In Africa, Incidents of HIV are responsible for nearly 80% of the increase in MSE when that variable is omitted, and GDP per Capita remains dominant in Europe. The increased importance of Population across regions suggests that the linear model is missing interactions between variables and the dataset contains strong nonlinear dynamics (Figures 4 and 5).
+
+```{r OLS Standardized Coefficients by Region, echo = FALSE, message = FALSE, fig.cap = "Figure 4"}
+# Clean regional data
+life_clean <- life_model %>%
+  select(Region, Life_expectancy, Population_mln, Schooling, GDP_per_capita, Incidents_HIV) %>%
+  na.omit()
+
+
+ols_importance_std <- life_clean %>%
+  group_split(Region) %>%
+  set_names(unique(life_clean$Region)) %>%
+  map_dfr(~ {
+    region <- unique(.x$Region)
+
+    # Manually standardize predictors and outcome
+    df_std <- .x %>%
+      mutate(across(c(Life_expectancy, Population_mln, Schooling, GDP_per_capita, Incidents_HIV),
+                    ~ (.x - mean(.x, na.rm = TRUE)) / sd(.x, na.rm = TRUE)))
+
+    # Fit OLS on standardized data
+    model <- lm(Life_expectancy ~ Population_mln + Schooling + GDP_per_capita + Incidents_HIV, data = df_std)
+
+    # Extract coefficients
+    tidy(model) %>%
+      filter(term != "(Intercept)") %>%
+      rename(Variable = term, Importance = estimate) %>%
+      mutate(Region = region)
+  })
+
+ols_importance_std <- life_clean %>%
+  group_split(Region) %>%
+  set_names(unique(life_clean$Region)) %>%
+  map_dfr(~ {
+    region <- unique(.x$Region)
+
+    # Manually standardize predictors and outcome
+    df_std <- .x %>%
+      mutate(across(c(Life_expectancy, Population_mln, Schooling, GDP_per_capita, Incidents_HIV),
+                    ~ (.x - mean(.x, na.rm = TRUE)) / sd(.x, na.rm = TRUE)))
+
+    # Fit OLS on standardized data
+    model <- lm(Life_expectancy ~ Population_mln + Schooling + GDP_per_capita + Incidents_HIV, data = df_std)
+
+    # Extract coefficients
+    tidy(model) %>%
+      filter(term != "(Intercept)") %>%
+      rename(Variable = term, Importance = estimate) %>%
+      mutate(Region = region)
+  })
+
+ggplot(ols_importance_std, aes(x = reorder(Variable, Importance), y = Importance, fill = Variable)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~ Region, scales = "free") +
+  coord_flip() +
+  labs(
+    title = "OLS Standardized Coefficients by Region",
+    subtitle = "Manually standardized (z-scores); larger magnitude = more importance",
+    y = "Standardized Effect Size", x = NULL
+  ) +
+  theme_minimal(base_size = 10)
+```
+
+```{r Variable Importance By Region, echo = FALSE, message=FALSE, warning=FALSE, fig.cap = "Figure 5"}
+life_model = life %>%
+  select(Country, Region, Year, Population_mln, Schooling, GDP_per_capita, Incidents_HIV, Life_expectancy)
+
+life_clean <- life %>%
+  select(Region, Life_expectancy, Incidents_HIV, GDP_per_capita, Population_mln, Schooling) %>%
+  na.omit()
+
+# Split data by Region
+life_by_region <- split(life_clean, life_clean$Region)
+
+# Run Random Forest and extract importance for each region
+rf_results <- map(life_by_region, ~ {
+  rf_model <- randomForest(
+    Life_expectancy ~ Incidents_HIV + GDP_per_capita + Population_mln + Schooling,
+    data = .x,
+    importance = TRUE
+  )
+  importance(rf_model)
+})
+
+# View importance for one region (example: "Asia")
+
+
+importance_list <- list()
+
+# Loop over each region
+for (reg in unique(life$Region)) {
+  imp <- as.data.frame(rf_results[[reg]])
+  imp$Variable <- rownames(imp)
+  imp$Region <- reg
+  rownames(imp) <- NULL
+  importance_list[[reg]] <- imp
+}
+
+# Combine into one dataframe
+importance_df <- do.call(rbind, importance_list)
+
+# Optional: clean column names if needed
+colnames(importance_df) <- c("PercentIncMSE", "IncNodePurity", "Variable", "Region")
+
+
+ggplot(importance_df, aes(x = reorder(Variable, PercentIncMSE), y = PercentIncMSE, fill = Variable)) +
+  geom_col(position = "dodge") +
+  facet_wrap(~ Region, scales = "free_y") +
+  labs(
+    title = "Variable Importance by Region (Random Forest)",
+    x = "Variable",
+    y = "% Increase in MSE"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "none", 
+        axis.text.x = element_text(angle = 45, hjust = 1),
+        strip.text = element_text(face = "bold"))
+```
+
+
+  Overall, these results show that there is no single variable which can universally predict life expectancy. However, the regional context is quite important in determining the explanatory power of each predictor. For example, in less developed regions such as Africa, public health factors such as HIV Incidence matter more. While in more developed and industrialized regions, infrastructural factors such as GDP and Education seem to matter more. The difference in Population’s importance between the two models indicates this variable is specifically nonlinear, however its relative importance is questionable. The Random Forest model provided a better fit than the OLS model, likely due to the interactive and nonlinear nature of the predictor variables towards Life Expectancy. In total, the models provided complimentary insight from linear and non-linear interpretation which allows us to conclude that HIV, Schooling and GDP are the most influential variables. However, their relative importance is dependent on regional context. Interestingly, the importance of these variables does not appear to change much when viewed over time. With only HIV seeming to become slightly less important, and Schooling to become slightly more important in recent years (Figure 6).
+
+
+
+```{r Variable Importance Over Time, echo = FALSE, message=FALSE, warning=FALSE, fig.cap = "Figure 6"}
+life_clean <- life_model %>%
+  filter(Year >= 2000 & Year <= 2015) %>%
+  select(Year, Life_expectancy, Population_mln, Schooling, GDP_per_capita, Incidents_HIV) %>%
+  na.omit()
+
+# Function for OLS (standardized)
+ols_by_year <- function(data) {
+  data_std <- data %>%
+    mutate(across(-Year, ~ (.x - mean(.x)) / sd(.x)))
+  
+  lm_model <- lm(Life_expectancy ~ Population_mln + Schooling + GDP_per_capita + Incidents_HIV, data = data_std)
+  
+  tidy(lm_model) %>%
+    filter(term != "(Intercept)") %>%
+    rename(Variable = term, Importance = estimate)
+}
+
+# Function for RF
+rf_by_year <- function(data) {
+  rf_model <- randomForest(
+    Life_expectancy ~ Population_mln + Schooling + GDP_per_capita + Incidents_HIV,
+    data = data,
+    importance = TRUE
+  )
+  imp <- importance(rf_model, type = 1)
+  tibble::tibble(
+    Variable = rownames(imp),
+    Importance = imp[, 1]
+  )
+}
+
+# Loop over years
+ols_imp_ts <- map_dfr(2000:2015, function(y) {
+  yearly_data <- filter(life_clean, Year == y)
+  if(nrow(yearly_data) < 10) return(NULL)  # skip small samples
+  
+  ols_by_year(yearly_data) %>%
+    mutate(Model = "OLS", Year = y)
+})
+
+rf_imp_ts <- map_dfr(2000:2015, function(y) {
+  yearly_data <- filter(life_clean, Year == y)
+  if(nrow(yearly_data) < 10) return(NULL)
+
+  rf_by_year(yearly_data) %>%
+    mutate(Model = "RandomForest", Year = y)
+})
+
+# Combine both
+importance_ts <- bind_rows(ols_imp_ts, rf_imp_ts)
+ggplot(importance_ts, aes(x = Year, y = Importance, color = Variable)) +
+  geom_line(size = 1) +
+  geom_point(size = 2, alpha = 0.7) +
+  facet_wrap(~ Model, scales = "free_y") +
+  labs(
+    title = "Variable Importance Over Time (2000–2015)",
+    subtitle = "Faceted by Model | OLS (Standardized Coefficients) vs Random Forest",
+    x = "Year", y = "Importance",
+    color = "Variable"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    strip.text = element_text(size = 13, face = "bold"),
+    legend.position = "bottom"
+  )
+
+```
+
+
+  When examining our data for Question 2 we discovered there were 9 countries whose trends for schooling and adult mortality were unusual. We defined unusual as countries that had above average schooling and also above average adult mortality. For schooling, average was defined as the 75th percentile which was 10.3 years, as the average of 7.6 years was a little small. First, we used a lasso regression to simplify the model and look at multicollinearity. We set y as adult mortality and created a model with all the other variables. Using the glmnet package, we found the best possible lambda and created a model with it. When examining the coefficients of this model **BMI**, **Diphtheria**, and **Thinness** were reduced to zero and removed from the model, indicating that they don't have a significant impact on the model. We graphed the rest of the coefficients to get a better look at their distribution (Figure 7).
+
+```{r Lasso Coefficients, echo = FALSE, fig.cap = "Figure 7"}
+new_data <- filter(life_expectancy, Schooling > 10.3 & Adult_mortality > mean(Adult_mortality))
+y <- new_data$Adult_mortality
+
+x <- data.matrix(new_data[c("Schooling", "Year", "Infant_deaths", "Alcohol_consumption", "Hepatitis_B",
+                            "Measles", "BMI", "Diphtheria", "Polio", "Incidents_HIV", "GDP_per_capita",
+                            "Population_mln", "Thinness_ten_nineteen_years", "Life_expectancy")])
+
+cv_model <- cv.glmnet(x, y, alpha=1)
+best_lambda <- cv_model$lambda.min
+
+best_model <- glmnet(x, y, alpha=1, lambda=best_lambda)
+
+coef_matrix <- as.matrix(coef(best_model))
+
+coef_df <- data.frame(
+  term = rownames(coef_matrix),
+  estimate = coef_matrix[, 1]
+)
+
+coef_df <- coef_df %>%
+  filter(term != "(Intercept)", estimate != 0) %>%
+  arrange(estimate)
+
+ggplot(coef_df, aes(x = estimate, y = fct_inorder(term))) +
+  geom_point(color = "blue", size = 3) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "gray") +
+  labs(
+    title = "LASSO Coefficients Predicting Adult Mortality",
+    x = "Coefficient Estimate",
+    y = "Predictor"
+  ) +
+  theme_minimal()
+
+```
+
+
+  
+  From this graph we can see that Schooling has a positive relationship to adult mortality in the countries we examined. Life expectancy has a negative relationship with adult mortality which is to be expected. Unusually, HIV incidents also have a negative relationship with adult mortality. One possibility for this relationship could be from issues during data collection. Areas with higher numbers of incidents may also have measures put in place to counteract HIV, leading to adult mortality having a negative relationship. 
+
+
+  To get a deeper look we continued on with a multivariate regression to further examine possible confounders in the data. To do this we created two models. The first model simply plots adult mortality and schooling. The second model plots adult mortality to schooling and a confounding variable. We looped through all the possible confounding variables in the data and compared their coefficients to the first model in a table. Lastly we looked at the percent change from the coefficient for model 1 and the coefficient for the model with the potential confounding variable. Typically a 10-15% change suggests a presence of a confounding variable, so we filtered the table of coefficients to show all variables that had more than a 15% change.
+
+
+```{r Table with Coeff, echo = FALSE, fig.cap = "Figure 8"}
+potential_confounders <- c("Year", "Infant_deaths", "Alcohol_consumption", "Hepatitis_B",
+                           "Measles", "BMI", "Diphtheria", "Polio", "Incidents_HIV", 
+                           "GDP_per_capita", "Population_mln", "Thinness_ten_nineteen_years", 
+                           "Life_expectancy")
+
+
+model1 <- lm(Adult_mortality ~ Schooling, data = new_data)
+schooling_coef_model1 <- coef(model1)["Schooling"]
+
+
+variables <- c()
+coef_alone <- c()
+coef_with_confounder <- c()
+percent_change <- c()
+
+
+for (var in potential_confounders) {
+  formula_str <- as.formula(paste("Adult_mortality ~ Schooling +", var))
+
+  model2 <- lm(formula_str, data = new_data)
+
+  schooling_coef_model2 <- coef(model2)["Schooling"]
+
+  change <- ((schooling_coef_model2 - schooling_coef_model1) / schooling_coef_model1) * 100
+
+  variables <- c(variables, var)
+  coef_alone <- c(coef_alone, schooling_coef_model1)
+  coef_with_confounder <- c(coef_with_confounder, schooling_coef_model2)
+  percent_change <- c(percent_change, change)
+}
+
+confounder_check <- data.frame(
+  Variable = variables,
+  school_coef = coef_alone,
+  confounder_coef = coef_with_confounder,
+  percent_change = percent_change
+)
+
+confounder_check <- confounder_check[order(-abs(confounder_check$percent_change)), ]
+confounder_check %>% 
+  filter(percent_change > 15| percent_change < -15) %>%
+  kable(caption = "Figure 8")
+```
+
+```{r, echo = FALSE}
+
+```
+
+ 
+
+Looking at this table (Figure 8) independently we can identify nine possible confounding variables. However, from the lasso regression done earlier we can take out thinness and BMI from the model. That leaves us with **Life Expectancy**, **Infant Death**, **Year**, **HIV Incidents**, **Measles**, **GDP**, and **Population** as possible confounding variables from the multivariate regression analysis. Life expectancy and infant deaths are not that surprising to see on this list, as their impact on adult mortality is intuitive. Thus, the most possible confounding variables from this analysis seems to be **Year** and **HIV incidents**. 
+
+
+  From the results of both methods we can see that **Incidents of HIV** seem to be the biggest confounding variable when looking at the relationship between adult mortality and schooling. **Measles** and **GDP** also seem to be confounding variables with both analyses, albeit on a much smaller scale. These results point to the irregularities found with schooling and adult mortality possibly being connected to healthcare in the countries of interest. Despite having high numbers of schooling, weakened healthcare systems could be impacting adult mortality. In examining these countries it is important to take into account health and socioeconomic environments. If healthcare systems are inadequate, a simple health crisis could cause adult mortality rates to go up despite other variables having a pattern that would lead us to believe otherwise. Our dataset is also more focused on general life expectancy and disease and doesn't account for world events that could lead to skewed adult mortality. Events such as war, famine, and natural disasters are possible reasons for unusually high adult mortality, but they are factors that we can not examine within our dataset. It could be helpful to do further research into these countries to create a more complete picture of what exactly is causing adult mortality to be higher than expected. With what we can examine it is clear that these countries could benefit from a focus on improving healthcare access and quality to work against the high adult mortality rates.
+
+
+# CONCLUSION
+
+  Through exploring the World Health Organization’s data of 197 countries over the span of 15 years of various variables related to and including Life Expectancy, Group 7 uncovered important insights regarding the largest predictors of life expectancy. In general, our conclusions matched our predictions. We expected that **public health variables**, **GDP per Capita**, and **Schooling** would play a role in predicting life expectancy, and play a confounding role in the relationship between **Adult Mortality** and **Schooling**. However, for our first research question, the extent of the margins between regions was surprising. The differences in importance of variables between regions was something we anticipated, but the magnitude of the differences was surprising. In addition, our unexpected results (the presence of unusual trends with above average schooling and above average adult mortality) were the catalysts for our followup questions. Although our findings largely align with our initial predictions, they still offer valuable insights that policymakers and government officials can apply in real-world decision-making. Additional analysis is further needed to explore these intricate questions, but our data analysis and research gave us a better understanding of potential answers to our research questions.
+
+
+The aim of the first question was to reveal for each of the 9 regions of the world, which variable out of **GDP**, **Population**, **HIV**, and **Schooling** was the strongest predictor of life expectancy. The second question was created to understand what confounding variables were responsible for the strange phenomenon of countries having above average schooling and above average adult mortality. Our modeling for answering question 1 leads us to believe that the strength of the predictor variable of life expectancy varies by region. Specifically, **HIV** seems to be a strong predictor of life expectancy in less developed regions such as Africa. In more developed regions, **GDP per Capita** and **Schooling** were the strongest predictors of life expectancy. Population seems to have the lowest strength when it comes to predicting life expectancy relative to the other explanatory variables. The modeling for question two revealed that HIV incidents, along with GDP per Capita and Measles, seem to be confounding variables for the 9 countries with unusual trends (above average adult mortality and above average schooling). By conducting a multivariate regression along with a lasso regression, we were able to pinpoint these three variables by examining the coefficient estimates (lasso regression) and the percent change of the coefficients between the two models (multivariate regression) to single out confounding variables. Interestingly enough, HIV incidents were common answers for both of our research questions.
+
+  Our research questions serve a great purpose for answering real-world questions relating to life expectancy and countries that are lagging behind in important social areas. They pose pinpointed questions that policymakers and government officials often find themselves wondering as they look for ways to improve the lives of their constituents. Our findings are very significant and provide meaningful insights to real-world problems. Our first question, which helped us understand the leading predictor of life expectancy in different regions around the world, made it clear that there is not one single predictor that answers this question for different places around the globe. Breaking the question down by region showed us that different social and health-related factors have different importance levels when looking at life expectancy. For example, in less-developed areas, public health factors, such as prevalence of disease, play a large role in predicting life expectancy. However, in more developed regions, infrastructural factors such as GDP per Capita are leading predictors. This is incredibly important in a real-world context as it provides policymakers with answers of how to address the problems seen in their region. In lesser-developed regions, more funding and interventions are needed in public health. By using these results to come up with solutions, policymakers and government officials can improve the lives of those in their region by understanding which area needs to be targeted the most. Our second research question, determining confounding variables in countries with unusual trends (above average schooling and above average adult mortality), also provided significant results that can be used in the real world. An expected answer we uncovered from our analysis is that schooling is not the leading predictor in determining adult mortality. This led us to perform additional analysis, finding that **HIV incidents**, **GDP per Capita**, and **Measles** are potential confounding variables for countries that have these unusual trends. These results are very interesting and lay out important steps for countries moving forward. In addition to improving educational systems to lower rates of adult mortality, policymakers and government officials should ensure that they prioritize public health improvements. If countries continue to only fund educational infrastructure, these unusual trends will persist. More priority should be placed on a holistic approach, funding each area that can drive higher rates of adult mortality.
+
+  It goes without saying that more analysis and research into our two questions is necessary. A few potential recommendations for future research include a different method of grouping countries, additional modeling, and finding additional data. Firstly, grouping countries in a different way than by region could be useful. For instance, grouping countries with high/low prevalence of HIV incidents could allow us to look at the impact on life expectancy at a smaller scale. This could be done with many of the variables in our data. Secondly, additional modeling is certainly a necessity for extended analysis. Using panel regression models, such as a fixed effects model, would allow us to look at country-level results while controlling for unobservable variables. This would be very useful for examining results over time periods, and could also be used to compare pre and post government interventions in specific areas. Finally, finding additional data would be very useful for additional research. While our dataset was incredibly helpful, having more specific data in key areas (i.e. doctors per capita, access to clean water, funding, etc.) could help answer questions relating to life expectancy and adult mortality. Overall, our dataset was useful for preliminary data analysis, but performing more rigorous modeling techniques, finding new data, and utilizing different grouping strategies could provide meaningful results for real world application.
+
+
+
+
+
+
+
+
+
+
+
+
